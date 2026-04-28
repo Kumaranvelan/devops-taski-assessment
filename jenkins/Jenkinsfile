@@ -1,0 +1,140 @@
+pipeline{
+    agent any 
+
+    environment {
+        APP_NAME = 'taski-devops-app'
+        DOCKER_IMAGE = "kumaravelan/${APP_NAME}"
+        DOCKER_TAG = "${BUILD_NUMBER}"
+        DOCKER_CRED = credentials('dockerhub-credentials')
+        KUBECONFIG_CRED = credentials('kubeconfig-credentials')
+    }
+
+    stages{
+        
+        // stage - 1 - Checkout 
+        stage('Checkout') {
+            steps {
+                echo  'checking the source code'
+                checkout scm
+
+    }
+        }
+    //  stage - 2 - Install dependencies
+        stage('Install Dependencies') {
+           steps {
+            echo 'Installing dependencies'
+            dir('app') {
+                sh 'npm install'
+            }
+           }
+        }
+
+        // stage - 3 - Run tests
+        stage('Run Tests') {
+            steps {
+                echo 'Running tests'
+                dir('app') {
+                    sh 'npm test'
+                }
+            }
+        }
+
+    // stage - 4 - Build Docker image
+        stage('Build Docker') {
+            steps {
+                echo 'Building Docker Image'
+            dir('app') {
+                sh """
+                docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
+                docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest
+                """
+            }
+        }
+}
+
+//   stage 5 - Docker push 
+      stage('Docker Push') {
+        steps {
+            echo 'Pushing Docker Image to Docker Hub'
+                sh """
+                echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
+                docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
+                docker push ${DOCKER_IMAGE}:latest
+                """
+            }
+        }
+
+        // stage 6 - Deploy to AWS-EKS
+        stage('Deploy to EKS') {
+            steps {
+                echo 'Deploying to EKS'
+                sh """
+                   export KUBECONFIG=$KUBECONFIG_CRED
+                
+                # update image tag  in deployment 
+                sed -i 's|IMAGE_TAG|${DOCKER_TAG}|g' k8s/deployment.yaml
+
+                kubectl apply -f k8s/deployment.yaml
+                kubectl apply -f k8s/service.yaml
+
+                # wait for the rollout to complete
+                kubectl rollout status deployment/${APP_NAME} --timeout=120s 
+                """
+            }
+        }
+
+        // stage 7 - Health check 
+        stage('Health Check') {
+            steps {
+               echo ' Running health check...'
+                sh """
+                    export KUBECONFIG=$KUBECONFIG_CRED
+                    
+                    # Get LoadBalancer URL
+                    APP_URL=\$(kubectl get svc ${APP_NAME}-service \
+                        -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+                    
+                    echo "App URL: \$APP_URL"
+                    
+                    # Wait for LoadBalancer to be ready
+                    sleep 30
+                    
+                    # Hit health endpoint
+                    curl -f http://\$APP_URL:3000/health || exit 1
+                    
+                    echo " Health check passed!"
+            
+                """
+            }
+        }
+
+// POST - NOTIFICATIONS
+
+post{
+    success{
+        echo"""
+        Pipeline succeeded!
+        App: ${APP_NAME}
+        Image: ${DOCKER_IMAGE}:${DOCKER_TAG}
+        Status: Deployed to EKS
+        """
+    }
+    failure{
+        echo"""
+        pipeline failed!
+        App: ${APP_NAME}
+        Build: ${BUILD_NUMBER}
+        Action: Check Jenkins logs for details
+        """
+    }
+    always {
+        echo 'Cleaning up local docker images'
+        sh"""
+        docker rmi ${DOCKER_IMAGE}:${DOCKER_TAG} || true
+        docker rmi ${DOCKER_IMAGE}:latest || true
+        """
+    }
+}
+
+}
+}
