@@ -39,6 +39,15 @@ pipeline{
             }
         }
 
+        stage('Security Scan') {
+    steps {
+        echo ' Running security scan...'
+        dir('app') {
+            sh 'npm audit --audit-level=high || true'
+        }
+    }
+}
+
     // stage - 4 - Build Docker image
         stage('Build Docker') {
             steps {
