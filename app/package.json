@@ -1,0 +1,17 @@
+{
+  "name": "taski-devops-app",
+  "version": "1.0.0",
+  "description": "taSki DevOps Assessment - Node.js Application",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "jest --coverage"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "jest": "^29.0.0",
+    "supertest": "^6.3.3"
+  }
+}
