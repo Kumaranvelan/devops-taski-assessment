@@ -5,54 +5,48 @@ pipeline {
         APP_NAME        = 'taski-devops-app'
         DOCKER_IMAGE    = "kumaravelan/${APP_NAME}"
         DOCKER_TAG      = "${BUILD_NUMBER}"
-        DOCKER_CRED     = credentials('dockerhub-credentials')
-        KUBECONFIG_CRED = credentials('kubeconfig-credentials')
+        DOCKER_CREDS    = credentials('dockerhub-credentials')
     }
 
     stages {
 
-        // Stage 1 — Checkout source code
         stage('Checkout') {
             steps {
-                echo 'Checking out source code...'
+                echo ' Checking out source code...'
                 checkout scm
             }
         }
 
-        // Stage 2 — Install dependencies
         stage('Install Dependencies') {
             steps {
-                echo 'Installing dependencies...'
+                echo ' Installing dependencies...'
                 dir('app') {
                     sh 'npm install'
                 }
             }
         }
 
-        // Stage 3 — Run tests
-        stage('Run Tests') {
+        stage('Test') {
             steps {
-                echo 'Running tests...'
+                echo ' Running tests...'
                 dir('app') {
                     sh 'npm test'
                 }
             }
         }
 
-        // Stage 4 — Security scan
         stage('Security Scan') {
             steps {
-                echo 'Running security scan...'
+                echo ' Running security scan...'
                 dir('app') {
                     sh 'npm audit --audit-level=high || true'
                 }
             }
         }
 
-        // Stage 5 — Build Docker image
-        stage('Build Docker Image') {
+        stage('Docker Build') {
             steps {
-                echo 'Building Docker image...'
+                echo ' Building Docker image...'
                 dir('app') {
                     sh """
                         docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
@@ -62,83 +56,27 @@ pipeline {
             }
         }
 
-        // Stage 6 — Push Docker image to DockerHub
-        stage('Push Docker Image') {
+        stage('Docker Push') {
             steps {
-                echo 'Pushing Docker image to DockerHub...'
+                echo ' Pushing image to DockerHub...'
                 sh """
-                    echo ${DOCKER_CRED_PSW} | docker login -u ${DOCKER_CRED_USR} --password-stdin
+                    echo $DOCKER_CREDS_PSW | docker login -u $DOCKER_CREDS_USR --password-stdin
                     docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
                     docker push ${DOCKER_IMAGE}:latest
                 """
             }
         }
 
-        // Stage 7 — Deploy to EKS
-        stage('Deploy to EKS') {
-            steps {
-                echo 'Deploying to EKS...'
-                sh """
-                    export KUBECONFIG=${KUBECONFIG_CRED}
-
-                    # Update image tag in deployment
-                    sed -i 's|IMAGE_TAG|${DOCKER_TAG}|g' k8s/deployment.yaml
-
-                    kubectl apply -f k8s/deployment.yaml
-                    kubectl apply -f k8s/service.yaml
-
-                    # Wait for rollout to complete
-                    kubectl rollout status deployment/${APP_NAME} --timeout=120s
-                """
-            }
-        }
-
-        // Stage 8 — Health check
-        stage('Health Check') {
-            steps {
-                echo 'Running health check...'
-                sh """
-                    export KUBECONFIG=${KUBECONFIG_CRED}
-
-                    # Get LoadBalancer URL
-                    APP_URL=\$(kubectl get svc ${APP_NAME}-service \\
-                        -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-
-                    echo "App URL: \$APP_URL"
-
-                    # Wait for LoadBalancer to be ready
-                    sleep 30
-
-                    # Hit health endpoint
-                    curl -f http://\$APP_URL:3000/health || exit 1
-
-                    echo "Health check passed!"
-                """
-            }
-        }
-
     }
 
-    // Post actions — outside stages block
     post {
         success {
-            echo """
-                Pipeline succeeded!
-                App:    ${APP_NAME}
-                Image:  ${DOCKER_IMAGE}:${DOCKER_TAG}
-                Status: Deployed to EKS
-            """
+            echo ' Pipeline SUCCESS! Image pushed to DockerHub!'
         }
         failure {
-            echo """
-                Pipeline failed!
-                App:   ${APP_NAME}
-                Build: ${BUILD_NUMBER}
-                Check Jenkins logs for details.
-            """
+            echo '❌ Pipeline FAILED! Check logs above.'
         }
         always {
-            echo 'Cleaning up local Docker images...'
             sh """
                 docker rmi ${DOCKER_IMAGE}:${DOCKER_TAG} || true
                 docker rmi ${DOCKER_IMAGE}:latest || true
